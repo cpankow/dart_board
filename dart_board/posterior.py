@@ -2,7 +2,7 @@
 
 import sys
 import numpy as np
-from scipy.stats import norm
+from scipy.stats import norm, multivariate_normal
 from scipy.integrate import quad
 
 import time as tm  # For testing
@@ -281,6 +281,23 @@ def posterior_properties(x, output, dart):
             if likelihood == 0.0: return -np.inf
             ll += np.log(likelihood)
 
+        if key == "mc":
+            error = get_error_from_kwargs("mc", **dart.system_kwargs)
+            if np.shape(value) == 0:
+                # Scalar -- only mc value
+                likelihood = calc_prob_from_mc_eta(output['M2'], output['M1'], value, error)
+            elif np.shape(value) == 1:
+                # 1d array -- uncorrelated mc/eta
+                error_eta = get_error_from_kwargs("eta", **dart.system_kwargs)
+                likelihood = calc_prob_from_mc_eta(output['M2'], output['M1'], value[0], error, value[1], error_eta)
+            elif np.shape(value) == 2:
+                # 2d array -- full mc/eta covariance
+                error = get_error_from_kwargs("mc_eta", **dart.system_kwargs)
+                likelihood = calc_prob_from_mc_eta(output['M2'], output['M1'], value[0], None, value[1], None, error)
+
+            if likelihood == 0.0: return -np.inf
+            ll += np.log(likelihood)
+
         if key == 'L_x_min':
             if L_x_out < value: return -np.inf
         if key == 'L_x_max':
@@ -358,6 +375,25 @@ def calculate_L_x(M1, mdot, k1):
 
     return L_x
 
+def calc_prob_from_mc_eta(M1, M2, mc_obs, mc_err, eta_obs=None, eta_err=None, cov=None):
+    # FIXME: this is source frame, we need detector frame (and hence a redshift
+    # distriution)
+    mc = (M1 * M2)**(5. / 3) / (M1 + M1)**(1. / 5)
+    eta = (M * M2) / (M1 + M2)**2
+
+    # No constraint on eta
+    if eta_obs is None:
+        return norm.pdf(mc, mc_obs, mc_err)
+
+    # Typically, the posteriors are tilted (slightly) in the mc/eta plane
+    if eta_obs is not None and cov is None:
+        # ...but we ignore it if we don't have it
+        _cov = [[mc_err, 0], [0, eta_err]]
+    else:
+        _cov = cov
+
+    return multivariate_norm.pdf((mc, eta), (mc_obs, eta_obs), _cov)
+        
 
 def calc_prob_from_mass_function(M1, M2, f_obs, f_err):
     """
